@@ -70,7 +70,7 @@
 
     .cards {
       display: grid;
-      grid-template-columns: repeat(6, minmax(130px, 1fr));
+      grid-template-columns: repeat(6, minmax(150px, 1fr));
       gap: 12px;
       margin-bottom: 18px;
     }
@@ -90,8 +90,9 @@
     }
 
     .card .value {
-      font-size: 28px;
+      font-size: 25px;
       font-weight: 700;
+      line-height: 1.15;
     }
 
     .filters {
@@ -327,6 +328,52 @@
       font-size: 13px;
     }
 
+    .line-chart {
+      margin-top: 12px;
+    }
+
+    .line-chart svg {
+      display: block;
+      width: 100%;
+      height: 170px;
+      overflow: visible;
+    }
+
+    .chart-axis,
+    .chart-grid {
+      stroke: var(--line);
+      stroke-width: 1;
+    }
+
+    .chart-grid {
+      stroke-dasharray: 3 4;
+    }
+
+    .chart-line {
+      fill: none;
+      stroke: var(--blue);
+      stroke-width: 3;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .chart-point {
+      fill: var(--panel);
+      stroke: var(--blue);
+      stroke-width: 2;
+    }
+
+    .chart-label {
+      fill: var(--muted);
+      font-size: 11px;
+    }
+
+    .chart-value {
+      fill: var(--ink);
+      font-size: 11px;
+      font-weight: 650;
+    }
+
     .user-list {
       display: grid;
       gap: 6px;
@@ -461,6 +508,7 @@
           <div class="panel-meta" id="summaryMeta"></div>
         </div>
         <div class="side-section" id="satisfactionBars"></div>
+        <div class="side-section" id="responseFrequency"></div>
         <div class="side-section" id="randomBars"></div>
         <div class="side-section" id="randomSatisfactionMatrix"></div>
         <div class="side-section" id="partBars"></div>
@@ -556,6 +604,10 @@
     function pct(value, total) {
       if (!total) return "0%";
       return `${Math.round((value / total) * 100)}%`;
+    }
+
+    function pctWithCount(value, total) {
+      return `${pct(value, total)} (${value || 0})`;
     }
 
     function countBy(records, fn) {
@@ -659,8 +711,8 @@
       const cards = [
         ["Records", total],
         ["Unique users", uniqueUsers],
-        ["Satisfied yes", satisfiedCounts.yes || 0],
-        ["Satisfied no", satisfiedCounts.no || 0],
+        ["Satisfied yes", pctWithCount(satisfiedCounts.yes || 0, total)],
+        ["Satisfied no", pctWithCount(satisfiedCounts.no || 0, total)],
         ["Random", randomCounts.true || 0],
         ["Not random", randomCounts.false || 0],
       ];
@@ -695,6 +747,7 @@
         ["no", "No"],
         ["missing", "Missing"],
       ], total);
+      renderResponseFrequency(records);
       renderBars("randomBars", "Random Result", countBy(records, randomStatus), [
         ["true", "Random"],
         ["false", "Not random"],
@@ -708,6 +761,78 @@
       }));
       renderBars("partBars", "Part Coverage", partCounts, PART_ORDER.map((part) => [part, part]), total);
       renderUserList(records);
+    }
+
+    function dayKey(timestamp) {
+      const date = new Date(timestamp);
+      if (Number.isNaN(date.getTime())) return null;
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    }
+
+    function formatDayLabel(key) {
+      const date = new Date(`${key}T00:00:00`);
+      if (Number.isNaN(date.getTime())) return key;
+      return date.toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric"
+      });
+    }
+
+    function renderResponseFrequency(records) {
+      const counts = {};
+      records.forEach((record) => {
+        const key = dayKey(record.timestamp);
+        if (key) counts[key] = (counts[key] || 0) + 1;
+      });
+
+      const days = Object.entries(counts).sort((a, b) => a[0].localeCompare(b[0]));
+      if (!days.length) {
+        el("responseFrequency").innerHTML = `
+          <strong>Response Frequency</strong>
+          <div class="matrix-note">No dated responses in the current filters.</div>
+        `;
+        return;
+      }
+
+      const width = 320;
+      const height = 170;
+      const padding = { top: 20, right: 14, bottom: 34, left: 30 };
+      const innerWidth = width - padding.left - padding.right;
+      const innerHeight = height - padding.top - padding.bottom;
+      const maxCount = Math.max(...days.map(([, count]) => count), 1);
+      const x = (index) => padding.left + (days.length === 1 ? innerWidth / 2 : (index / (days.length - 1)) * innerWidth);
+      const y = (count) => padding.top + innerHeight - (count / maxCount) * innerHeight;
+      const points = days.map(([, count], index) => `${x(index)},${y(count)}`).join(" ");
+      const yTicks = [...new Set([0, Math.ceil(maxCount / 2), maxCount])].sort((a, b) => a - b);
+      const xLabels = days.length <= 6
+        ? days.map(([key], index) => ({ key, index }))
+        : days
+          .map(([key], index) => ({ key, index }))
+          .filter((_, index, all) => index === 0 || index === all.length - 1 || index === Math.floor((all.length - 1) / 2));
+
+      el("responseFrequency").innerHTML = `
+        <strong>Response Frequency</strong>
+        <div class="line-chart">
+          <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Responses per day">
+            ${yTicks.map((tick) => `
+              <line class="chart-grid" x1="${padding.left}" y1="${y(tick)}" x2="${width - padding.right}" y2="${y(tick)}"></line>
+              <text class="chart-label" x="${padding.left - 8}" y="${y(tick) + 4}" text-anchor="end">${tick}</text>
+            `).join("")}
+            <line class="chart-axis" x1="${padding.left}" y1="${height - padding.bottom}" x2="${width - padding.right}" y2="${height - padding.bottom}"></line>
+            <polyline class="chart-line" points="${points}"></polyline>
+            ${days.map(([, count], index) => `
+              <circle class="chart-point" cx="${x(index)}" cy="${y(count)}" r="4"></circle>
+              <text class="chart-value" x="${x(index)}" y="${y(count) - 8}" text-anchor="middle">${count}</text>
+            `).join("")}
+            ${xLabels.map(({ key, index }) => `
+              <text class="chart-label" x="${x(index)}" y="${height - 12}" text-anchor="middle">${formatDayLabel(key)}</text>
+            `).join("")}
+          </svg>
+        </div>
+      `;
     }
 
     function renderRandomSatisfactionMatrix(records) {
